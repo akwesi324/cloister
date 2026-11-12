@@ -6,6 +6,11 @@ source /opt/cloister/lib.sh
 profile=${1:?usage: provision.sh core|dispo}
 [ -d "$CL_DIR/steps/$profile" ] || { log "unknown profile $profile"; exit 2; }
 
+# If the VM was switched off in the middle of a package install, finish or undo it first;
+# otherwise apt refuses to do anything until someone runs these by hand.
+dpkg --configure -a || true
+apt-get -f install -y || true
+
 for script in "$CL_DIR/steps/$profile"/*.sh; do
   name="$profile-$(basename "$script" .sh)"
   if [ -e "$CL_STATE/done.$name" ]; then continue; fi

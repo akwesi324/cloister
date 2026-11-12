@@ -34,7 +34,7 @@ test("seed server: cloud-init endpoints, LF-only files, progress, no traversal",
     assert.ok(ud.startsWith("#cloud-config"));
     assert.ok(ud.includes("cloister-provision@core.service"));
     assert.ok(!ud.includes("@SEED@") && !ud.includes("@PROFILE@"));
-    assert.match(await (await fetch(`${base}/meta-data`)).text(), /instance-id: cloister-core-1/);
+    assert.match(await (await fetch(`${base}/meta-data`)).text(), /instance-id: cloister-core-[0-9a-f]{12}\n/);
     const cl = await (await fetch(`${base}/files/bin/cl`)).text();
     assert.ok(cl.startsWith("#!/bin/bash") && !cl.includes("\r"));
     assert.equal((await fetch(`${base}/files/..%2F..%2Fpackage.json`)).status, 404);
