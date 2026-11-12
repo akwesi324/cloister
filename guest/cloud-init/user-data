@@ -1,0 +1,37 @@
+#cloud-config
+# Rendered by the launcher's seed server (@SEED@, @PROFILE@ and @HOSTNAME@ are filled in).
+hostname: @HOSTNAME@
+locale: en_US.UTF-8
+ssh_pwauth: false
+users:
+  - name: analyst
+    gecos: Cloister Analyst
+    shell: /bin/bash
+    groups: [sudo]
+    lock_passwd: false
+    # Temporary; the first-run wizard makes you replace it.
+    plain_text_passwd: cloister
+write_files:
+  - path: /var/lib/cloister/seed-url
+    content: "@SEED@"
+  - path: /usr/local/sbin/cloister-fetch
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # Copy the provisioning scripts from the launcher into /opt/cloister.
+      set -euo pipefail
+      seed=$(cat /var/lib/cloister/seed-url)
+      get() { curl -fsS --retry 30 --retry-delay 5 --retry-all-errors "$@"; }
+      mkdir -p /opt/cloister
+      get "$seed/manifest" | while read -r rel; do
+        [ -n "$rel" ] || continue
+        mkdir -p "/opt/cloister/$(dirname "$rel")"
+        get -o "/opt/cloister/$rel" "$seed/files/$rel"
+      done
+      find /opt/cloister -name '*.sh' -exec chmod 0755 {} +
+      chmod 0755 /opt/cloister/bin/*
+runcmd:
+  - [/usr/local/sbin/cloister-fetch]
+  - [install, -m, "0644", /opt/cloister/systemd/cloister-provision@.service, /etc/systemd/system/]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, --no-block, "cloister-provision@@PROFILE@.service"]

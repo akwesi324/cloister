@@ -1,0 +1,67 @@
+#!/bin/bash
+# First login: replace the temporary login password and the build-time disk key with
+# secrets only you know. Runs once; re-run with: sudo cloister-firstrun
+set -euo pipefail
+
+dev=/dev/disk/by-id/virtio-cloister-data
+tmpkey=/root/.cloister-provision.key
+done_marker=/var/lib/cloister/firstrun-done
+
+if [ -e "$done_marker" ]; then echo "First-run setup is already done."; sleep 3; exit 0; fi
+
+cat <<'EOF'
+ ====================================================================
+  Welcome to Cloister
+ ====================================================================
+  Two secrets protect this machine:
+
+   1. Your login password (replaces the temporary one, "cloister").
+   2. Your disk passphrase. It unlocks the encrypted disk holding every
+      compartment, the vault and your evidence, and is asked at each boot.
+      If you lose it, the data cannot be recovered by anyone.
+ ====================================================================
+EOF
+
+echo; echo "Step 1 of 2: new login password for 'analyst'"
+until passwd analyst; do echo "Try again."; done
+
+echo; echo "Step 2 of 2: disk passphrase (at least 12 characters; a few random words works well)"
+while true; do
+  read -r -s -p "Passphrase: " p1; echo
+  read -r -s -p "Again:      " p2; echo
+  if [ "$p1" != "$p2" ]; then echo "They do not match."; continue; fi
+  if [ ${#p1} -lt 12 ]; then echo "Too short."; continue; fi
+  break
+done
+
+if [ -f "$tmpkey" ]; then
+  printf '%s' "$p1" | cryptsetup luksAddKey --key-file "$tmpkey" "$dev" -
+  # Prove the new passphrase works before destroying the build key.
+  printf '%s' "$p1" | cryptsetup open --test-passphrase --key-file - "$dev"
+  cryptsetup luksRemoveKey "$dev" "$tmpkey"
+  shred -u "$tmpkey"
+else
+  echo "(The build key was already removed; changing the existing passphrase instead.)"
+  cryptsetup luksChangeKey "$dev"
+fi
+unset p1 p2
+sed -i -E "s#^(cloister-data[[:space:]]+[^[:space:]]+[[:space:]]+)[^[:space:]]+#\1none#" /etc/crypttab
+
+rm -f /etc/lightdm/lightdm.conf.d/50-cloister-firstrun.conf /etc/xdg/autostart/cloister-firstrun.desktop \
+  /etc/sudoers.d/cloister-firstrun
+mkdir -p "$(dirname "$done_marker")"
+date -u > "$done_marker"
+
+cat <<'EOF'
+
+ Done. From the next boot you will be asked for the disk passphrase, then your password.
+
+ Optional next steps:
+   cl vpn import ~/my-vpn.conf && cl vpn up    (WireGuard .conf or OpenVPN .ovpn)
+   cl net pentest vpn                          (send a compartment through the VPN)
+   cl dispose                                  (throwaway Firefox over Tor)
+   cl list                                     (everything at a glance)
+
+ Press Enter to close.
+EOF
+read -r _

@@ -1,0 +1,6 @@
+# vault compartment: never has a network card. Secrets, keys and case notes.
+keepassxc
+gnupg
+pinentry-gtk2
+age
+mousepad

@@ -1,0 +1,62 @@
+#!/bin/bash
+# Inside sys-vpn: install and control the VPN tunnel.
+#   cloister-vpn import <file.conf|file.ovpn>   WireGuard or OpenVPN profile
+#   cloister-vpn up | down | status
+set -euo pipefail
+state=/etc/cloister-vpn
+mkdir -p "$state"
+chmod 0700 "$state"
+fallback_dns=9.9.9.9   # used through the tunnel when the profile names no resolver
+
+set_dns() {
+  local servers=("$@")
+  [ ${#servers[@]} -gt 0 ] || servers=("$fallback_dns")
+  printf 'server=%s\n' "${servers[@]}" > /etc/dnsmasq.d/vpn-upstream.servers
+  systemctl restart dnsmasq
+}
+
+case "${1:-status}" in
+  import)
+    src=${2:?usage: cloister-vpn import <file>}
+    "$0" down >/dev/null 2>&1 || true
+    rm -f "$state"/*
+    case "$src" in
+      *.conf)
+        # wg-quick would call resolvconf for "DNS ="; take the resolver out and give it to dnsmasq.
+        grep -iE '^\s*DNS\s*=' "$src" | sed -E 's/^[^=]*=\s*//' | tr ',' '\n' | tr -d ' ' | grep -E '^[0-9.]+$' > "$state/dns" || true
+        grep -viE '^\s*DNS\s*=' "$src" > /etc/wireguard/wg0.conf
+        chmod 0600 /etc/wireguard/wg0.conf
+        echo wireguard > "$state/type"
+        ;;
+      *.ovpn)
+        install -m 0600 "$src" /etc/openvpn/client/cloister.conf
+        grep -iE '^\s*dhcp-option\s+DNS' "$src" | awk '{print $3}' > "$state/dns" || true
+        echo openvpn > "$state/type"
+        ;;
+      *) echo "Expected a WireGuard .conf or an OpenVPN .ovpn file" >&2; exit 2 ;;
+    esac
+    echo "Imported $(cat "$state/type") profile. Start it with: cl vpn up"
+    ;;
+  up)
+    type=$(cat "$state/type" 2>/dev/null || true)
+    [ -n "$type" ] || { echo "No VPN profile yet. Use: cl vpn import <file>" >&2; exit 1; }
+    mapfile -t dns < <(cat "$state/dns" 2>/dev/null || true)
+    if [ "$type" = wireguard ]; then systemctl enable --now wg-quick@wg0
+    else systemctl enable --now openvpn-client@cloister; fi
+    set_dns "${dns[@]}"
+    echo "VPN up."
+    ;;
+  down)
+    systemctl disable --now wg-quick@wg0 2>/dev/null || true
+    systemctl disable --now openvpn-client@cloister 2>/dev/null || true
+    : > /etc/dnsmasq.d/vpn-upstream.servers
+    systemctl restart dnsmasq || true
+    echo "VPN down. Compartments on the VPN network now have no internet (kill switch)."
+    ;;
+  status)
+    type=$(cat "$state/type" 2>/dev/null || echo none)
+    echo "Profile: $type"
+    ip -brief addr show wg0 2>/dev/null || ip -brief addr show tun0 2>/dev/null || echo "Tunnel: down (clients blocked)"
+    ;;
+  *) echo "usage: cloister-vpn import <file> | up | down | status" >&2; exit 2 ;;
+esac

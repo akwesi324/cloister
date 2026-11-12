@@ -1,0 +1,212 @@
+#!/bin/bash
+# cl - manage Cloister compartments from the core desktop.
+set -euo pipefail
+
+declare -A COLOR=([vault]="#1f1f1f" [pentest]="#d32f2f" [soc]="#ef8a00" [forensics]="#7b3fbf" [sys-tor]="#c9a400" [sys-vpn]="#c9a400")
+DISPO_COLOR="#7f8c8d"
+NETS=(direct tor vpn none)
+SOCK_DIR=/run/cloister
+
+usage() {
+  cat <<'EOF'
+cl - Cloister compartments
+
+  cl list                              Compartments, state and network
+  cl term <comp>                       Terminal in a compartment
+  cl run <comp> <command...>           Start a program in a compartment
+  cl start|stop <comp>
+  cl net <comp> [direct|tor|vpn|none]  Show or change a compartment's network
+  cl copy <comp>:<path> <comp>         Copy a file to <comp>:~/Incoming/<from>/
+  cl clip <from> <to>                  Copy the clipboard from one compartment to another
+  cl dispose [--net tor|vpn|direct|none] [command...]
+                                       Throwaway compartment (default: Firefox over Tor),
+                                       deleted completely when its window closes
+  cl reset <comp>                      Roll a compartment back to its freshly built state
+  cl vpn import <file> | up | down | status
+  cl tor status
+  cl missing <comp>                    Tools that could not be installed
+EOF
+}
+
+die() { echo "cl: $*" >&2; exit 1; }
+confirm() { # message
+  if [ -t 0 ]; then read -r -p "$1 [y/N] " a; [[ "$a" =~ ^[Yy]$ ]];
+  else zenity --question --title=Cloister --text="$1" 2>/dev/null; fi
+}
+exists() { incus info "$1" >/dev/null 2>&1; }
+need() { exists "$1" || die "no compartment named '$1' (see: cl list)"; }
+running() { [ "$(incus list "^$1\$" -c s -f csv)" = RUNNING ]; }
+is_system() { [[ "$1" == sys-* ]]; }
+
+ensure_running() {
+  local c=$1
+  running "$c" || incus start "$c"
+  for _ in $(seq 1 30); do
+    incus exec "$c" -- systemctl is-active --quiet cloister-display.service 2>/dev/null && return 0
+    sleep 1
+  done
+  die "$c started but its display did not come up"
+}
+
+net_of() {
+  local net
+  net=$(incus config device get "$1" eth0 network 2>/dev/null || true)
+  case "$net" in clnet) echo direct ;; cltor) echo tor ;; clvpn) echo vpn ;; "") echo none ;; *) echo "$net" ;; esac
+}
+
+set_net() { # comp net [--quiet]
+  local c=$1 net=$2 bridge
+  case "$net" in
+    direct) bridge=clnet ;; tor) bridge=cltor ;; vpn) bridge=clvpn ;; none) bridge= ;;
+    *) die "network must be one of: ${NETS[*]}" ;;
+  esac
+  [ "$c" = vault ] && [ "$net" != none ] && die "the vault never gets a network"
+  is_system "$c" && die "gateway networks are fixed"
+  incus config device remove "$c" eth0 >/dev/null 2>&1 || true
+  if [ -n "$bridge" ]; then
+    incus config device add "$c" eth0 nic network="$bridge" name=eth0 security.mac_filtering=true >/dev/null
+  fi
+  [ "${3:-}" = --quiet ] || echo "$c: network is now '$net'"
+}
+
+# Show a compartment's windows on the core desktop: one Xpra client per compartment,
+# coloured border, title prefixed with the compartment name, no shared clipboard.
+attach() { # comp color
+  local c=$1 color=$2 sock="$SOCK_DIR/xpra-$1.sock" pidf="$SOCK_DIR/attach-$1.pid"
+  if [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; then return 0; fi
+  for _ in $(seq 1 20); do [ -S "$sock" ] && break; sleep 0.5; done
+  [ -S "$sock" ] || die "display socket for $c is missing"
+  setsid -f xpra attach "socket://$sock" --border="$color,4" --clipboard=no \
+    --title="[$c] @title@" --tray=no --notifications=no --speaker=off --microphone=off \
+    --webcam=no --file-transfer=no --printing=no --open-files=no \
+    >"$SOCK_DIR/attach-$c.log" 2>&1
+  sleep 1
+  pgrep -n -f "xpra attach socket://$sock" > "$pidf" || true
+}
+
+launch() { # comp command...
+  local c=$1; shift
+  incus exec "$c" --user 1000 --group 1000 --cwd /home/analyst \
+    --env HOME=/home/analyst --env DISPLAY=:100 --env XDG_RUNTIME_DIR=/tmp/xpra-run -- \
+    setsid -f "$@" >/dev/null 2>&1
+}
+
+run_in() { # comp command...
+  local c=$1; shift
+  need "$c"; is_system "$c" && die "gateways have no desktop"
+  ensure_running "$c"
+  attach "$c" "${COLOR[$c]:-$DISPO_COLOR}"
+  launch "$c" "$@"
+}
+
+cmd_list() {
+  printf '%-16s %-9s %-8s %s\n' COMPARTMENT STATE NETWORK NOTE
+  incus list -c ns -f csv | while IFS=, read -r name state; do
+    case "$name" in dispo-template) continue ;; esac
+    note=""
+    [ "$name" = vault ] && note="never networked"
+    is_system "$name" && note="gateway"
+    [[ "$name" == dispo-* ]] && note="throwaway"
+    printf '%-16s %-9s %-8s %s\n' "$name" "$state" "$(is_system "$name" && echo uplink || net_of "$name")" "$note"
+  done
+}
+
+cmd_copy() {
+  local src=${1:-} dst=${2:-}
+  [[ "$src" == *:* && -n "$dst" ]] || die "usage: cl copy <comp>:<path> <comp>"
+  local from=${src%%:*} path=${src#*:} tmp
+  need "$from"; need "$dst"
+  [ "$from" != "$dst" ] || die "source and destination are the same"
+  is_system "$dst" && die "files cannot be copied into gateways"
+  confirm "Copy '$path' from $from to $dst?" || die "cancelled"
+  [ "$from" = vault ] && { confirm "This takes data OUT of the vault. Are you sure?" || die "cancelled"; }
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' RETURN
+  running "$from" || incus start "$from"
+  running "$dst" || incus start "$dst"
+  incus file pull -r "$from/${path#/}" "$tmp/" || incus file pull -r "$from/home/analyst/$path" "$tmp/"
+  incus exec "$dst" -- install -d -o 1000 -g 1000 "/home/analyst/Incoming/$from"
+  incus file push -r "$tmp"/* "$dst/home/analyst/Incoming/$from/"
+  incus exec "$dst" -- chown -R 1000:1000 "/home/analyst/Incoming/$from"
+  echo "Copied to $dst:~/Incoming/$from/"
+}
+
+cmd_clip() {
+  local from=${1:-} to=${2:-} data
+  [ -n "$from" ] && [ -n "$to" ] || die "usage: cl clip <from> <to>"
+  need "$from"; need "$to"
+  [ "$from" = vault ] && { confirm "Copy the vault's clipboard to $to?" || die "cancelled"; }
+  data=$(incus exec "$from" --user 1000 --env DISPLAY=:100 -- xclip -selection clipboard -o 2>/dev/null) || die "$from has nothing on its clipboard"
+  printf '%s' "$data" | incus exec "$to" --user 1000 --env DISPLAY=:100 -- xclip -selection clipboard -i
+  echo "Clipboard copied from $from to $to (${#data} characters)."
+}
+
+cmd_dispose() {
+  local net=tor
+  if [ "${1:-}" = --net ]; then net=${2:?}; shift 2; fi
+  [ $# -gt 0 ] || set -- firefox-esr
+  local name="dispo-$(tr -dc a-z0-9 </dev/urandom | head -c 6)"
+  incus copy dispo-template/clean "$name" --ephemeral --instance-only 2>/dev/null \
+    || incus copy dispo-template "$name" --ephemeral --instance-only
+  incus config device override "$name" xpra listen="unix:$SOCK_DIR/xpra-$name.sock" >/dev/null 2>&1 \
+    || incus config device set "$name" xpra listen="unix:$SOCK_DIR/xpra-$name.sock"
+  set_net "$name" "$net" --quiet
+  incus start "$name"
+  ensure_running "$name"
+  attach "$name" "$DISPO_COLOR"
+  launch "$name" "$@"
+  echo "$name is running ($net). It is destroyed when its last window closes."
+  # Watcher: when the program exits, stop the compartment; being ephemeral, Incus deletes it.
+  (
+    sleep 5
+    while incus exec "$name" -- pgrep -u 1000 -f "$1" >/dev/null 2>&1; do sleep 3; done
+    incus stop "$name" --force >/dev/null 2>&1 || true
+    rm -f "$SOCK_DIR/attach-$name.pid" "$SOCK_DIR/attach-$name.log"
+  ) >/dev/null 2>&1 &
+  disown
+}
+
+cmd_reset() {
+  local c=${1:?usage: cl reset <comp>}
+  need "$c"
+  confirm "Roll $c back to its freshly built state? Everything changed inside it since is lost." || die "cancelled"
+  incus stop "$c" --force >/dev/null 2>&1 || true
+  incus snapshot restore "$c" clean
+  echo "$c restored."
+}
+
+case "${1:-}" in
+  list|ls) cmd_list ;;
+  term) run_in "${2:?usage: cl term <comp>}" xfce4-terminal ;;
+  files) run_in "${2:?usage: cl files <comp>}" thunar ;;
+  run) c=${2:?usage: cl run <comp> <command...>}; shift 2; [ $# -gt 0 ] || die "no command given"; run_in "$c" "$@" ;;
+  start) need "${2:?}"; ensure_running "$2"; echo "$2 started" ;;
+  stop) need "${2:?}"; incus stop "$2"; rm -f "$SOCK_DIR/attach-$2.pid"; echo "$2 stopped" ;;
+  net)
+    c=${2:?usage: cl net <comp> [net]}; need "$c"
+    if [ -z "${3:-}" ]; then net_of "$c"; else
+      set_net "$c" "$3" "${4:-}"
+      if running "$c"; then incus restart "$c" >/dev/null; fi
+    fi ;;
+  copy) cmd_copy "${2:-}" "${3:-}" ;;
+  clip) cmd_clip "${2:-}" "${3:-}" ;;
+  dispose) shift; cmd_dispose "$@" ;;
+  reset) cmd_reset "${2:-}" ;;
+  vpn)
+    case "${2:-status}" in
+      import)
+        f=${3:?usage: cl vpn import <file>}; [ -f "$f" ] || die "$f not found"
+        incus file push "$f" "sys-vpn/tmp/$(basename "$f")"
+        incus exec sys-vpn -- cloister-vpn import "/tmp/$(basename "$f")"
+        incus exec sys-vpn -- rm -f "/tmp/$(basename "$f")" ;;
+      *) incus exec sys-vpn -- cloister-vpn "${2:-status}" ;;
+    esac ;;
+  tor)
+    incus exec sys-tor -- sh -c 'systemctl is-active tor@default >/dev/null && echo "Tor: running" || echo "Tor: stopped"; journalctl -u tor@default -n 50 --no-pager -o cat | grep -o "Bootstrapped [0-9]*%[^\"]*" | tail -1' ;;
+  missing)
+    c=${2:?usage: cl missing <comp>}; need "$c"
+    running "$c" || incus start "$c"
+    incus exec "$c" -- cat /var/lib/cloister/missing 2>/dev/null || echo "nothing missing" ;;
+  ""|-h|--help|help) usage ;;
+  *) usage; exit 2 ;;
+esac

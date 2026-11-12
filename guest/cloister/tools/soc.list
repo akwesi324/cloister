@@ -1,0 +1,37 @@
+# soc compartment: detection, triage, log and network analysis.
+# Heavy server stacks (Elastic, Wazuh) are not installed by default: on an 8 GB machine
+# they starve everything else. See docs/TOOLS.md for the opt-in recipe.
+
+# Network security monitoring
+zeek
+suricata
+tshark
+wireshark
+tcpdump
+tcpflow
+ngrep
+nfdump
+argus-client
+
+# Windows event logs and detection rules
+chainsaw
+pipx:sigma-cli
+pipx:evtx
+python3-evtx
+yara
+pipx:yara-scanner
+
+# Threat intelligence and decoding
+cyberchef
+whois
+dnsutils
+jq
+pipx:pymisp
+
+# Log reading
+lnav
+multitail
+ripgrep
+
+# Desktop basics inside the compartment
+firefox-esr

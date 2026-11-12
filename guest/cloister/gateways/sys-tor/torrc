@@ -1,0 +1,10 @@
+# sys-tor: transparent Tor gateway for every compartment attached to the cltor network.
+# Clients on 10.152.152.0/24 never get a route to the internet; their TCP is redirected
+# into TransPort and their DNS into DNSPort below. Each client address gets its own circuits.
+SocksPort 10.152.152.1:9050 IsolateClientAddr IsolateDestAddr
+TransPort 10.152.152.1:9040 IsolateClientAddr IsolateDestAddr
+DNSPort 10.152.152.1:5353
+VirtualAddrNetworkIPv4 10.192.0.0/10
+AutomapHostsOnResolve 1
+ClientUseIPv6 0
+Log notice syslog

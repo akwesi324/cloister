@@ -1,0 +1,50 @@
+# forensics compartment (no network by default; evidence never leaves without `cl copy`).
+
+# Imaging and acquisition
+dc3dd
+dcfldd
+guymager
+ewf-tools
+afflib-tools
+xmount
+
+# File systems and carving
+sleuthkit
+autopsy
+foremost
+scalpel
+bulk-extractor
+testdisk
+magicrescue
+extundelete
+ext4magic
+dislocker
+hashdeep
+ssdeep
+
+# Memory
+volatility3
+
+# Timelines and artefacts
+plaso
+regripper
+rifiuti2
+chntpw
+libimage-exiftool-perl
+sqlitebrowser
+pipx:oletools
+pdfid
+pdf-parser
+
+# Malware and binaries
+yara
+binwalk
+ghidra
+radare2
+upx-ucl
+strace
+ltrace
+
+# Hex and text
+hexedit
+ghex

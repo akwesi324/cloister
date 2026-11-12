@@ -1,0 +1,17 @@
+[Unit]
+Description=Cloister provisioning (%i)
+Wants=network-online.target
+After=network-online.target cloud-final.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cloister/provision.sh %i
+# Slow or dropped connections are normal: keep retrying, every step is resumable.
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=infinity
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target

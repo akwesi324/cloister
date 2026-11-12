@@ -1,0 +1,17 @@
+{
+  "name": "cloister",
+  "version": "0.1.0",
+  "description": "A compartmentalised security workstation (pentest, SOC, forensics) that runs beside Windows and macOS instead of replacing them.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "cloister": "bin/cloister.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "check:sh": "node test/check-shell.js"
+  }
+}

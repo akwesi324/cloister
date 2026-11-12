@@ -1,0 +1,4 @@
+node_modules/
+*.qcow2
+*.part
+.DS_Store
