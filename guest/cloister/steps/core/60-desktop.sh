@@ -2,6 +2,9 @@
 # Core desktop: a "Cloister" menu with an entry per compartment, and the first-run wizard.
 source /opt/cloister/lib.sh
 
+# The core only needs the Xpra client (also covers builds made before 10-base did this).
+systemctl disable --now xpra-server.socket xpra-server.service >/dev/null 2>&1 || true
+
 install -m 0755 "$CL_DIR/bin/cl" /usr/local/bin/cl
 install -m 0755 "$CL_DIR/bin/cloister-firstrun" /usr/local/sbin/cloister-firstrun
 

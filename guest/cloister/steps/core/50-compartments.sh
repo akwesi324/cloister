@@ -40,7 +40,7 @@ build_compartment() { # name list-name
   cx "$c" rm -rf /tmp/cl
   incus config device remove "$c" eth0
   incus config device add "$c" xpra proxy bind=host \
-    listen="unix:/run/cloister/xpra-$c.sock" connect=tcp:127.0.0.1:14500 \
+    listen="unix:/run/cloister/xpra-$c.sock" connect=tcp:127.0.0.1:14650 \
     uid=1000 gid=1000 mode=0600 >/dev/null 2>&1 || true
   incus stop "$c" --force
   /usr/local/bin/cl net "$c" "${CL_NET[$c]:-none}" --quiet

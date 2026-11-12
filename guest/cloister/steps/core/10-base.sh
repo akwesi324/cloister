@@ -18,6 +18,8 @@ apt_install \
   xclip zenity curl ca-certificates gnupg qemu-guest-agent spice-vdagent \
   locales sudo less nano htop jq
 bash -c "$(install_xpra_cmds)"
+# Only the Xpra client is needed here; switch off the system-wide server the package enables.
+systemctl disable --now xpra-server.socket xpra-server.service >/dev/null 2>&1 || true
 
 # Show boot messages and the disk passphrase prompt in the VM window (tty0), not on the
 # serial port: the last console= on the kernel line is the one that receives prompts.

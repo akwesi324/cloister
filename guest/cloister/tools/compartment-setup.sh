@@ -8,6 +8,8 @@ apt-get update
 apt-get install -y --no-install-recommends \
   sudo xfce4-terminal thunar xclip dbus-x11 fonts-dejavu adwaita-icon-theme ca-certificates curl locales
 bash /tmp/cl/install-xpra.sh
+# The package enables a system-wide Xpra server; Cloister runs its own per-compartment one.
+systemctl disable --now xpra-server.socket xpra-server.service >/dev/null 2>&1 || true
 
 id analyst >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash analyst
 # Inside a compartment the analyst may administer it (install tools, capture packets).
@@ -26,7 +28,7 @@ ExecStartPre=/bin/mkdir -p /tmp/xpra-run
 # Loopback only. The core VM reaches it through an Incus proxy socket that only the core's
 # analyst user can open. Clipboard, file transfer, printing, audio and webcam are all off:
 # data crosses compartments only through `cl clip` and `cl copy`.
-ExecStart=/usr/bin/xpra start :100 --daemon=no --bind-tcp=127.0.0.1:14500 \
+ExecStart=/usr/bin/xpra start :100 --daemon=no --bind-tcp=127.0.0.1:14650 \
   --mdns=no --pulseaudio=no --notifications=no --webcam=no --printing=no \
   --file-transfer=no --open-files=no --clipboard=no --systemd-run=no
 Restart=always
