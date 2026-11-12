@@ -45,11 +45,14 @@ export async function fetchText(url) {
   return body;
 }
 
-/** Download url -> dest, resuming from dest.part. Retries on dropped connections. */
+/** Download url -> dest, resuming from dest.part. Only attempts that make no progress count
+ * towards the limit, so a link that keeps dropping but keeps moving never gives up. */
 export async function download(url, dest, { onProgress = () => {}, attempts = 30 } = {}) {
   const part = `${dest}.part`;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const have = fs.existsSync(part) ? fs.statSync(part).size : 0;
+  const size = () => (fs.existsSync(part) ? fs.statSync(part).size : 0);
+  let stalled = 0;
+  for (let attempt = 1; ; attempt++) {
+    const have = size();
     try {
       const res = await get(url, have ? { Range: `bytes=${have}-` } : {});
       if (res.statusCode === 416) {
@@ -80,9 +83,10 @@ export async function download(url, dest, { onProgress = () => {}, attempts = 30
       if (total && done < total) throw new Error("download ended early");
       break;
     } catch (err) {
-      if (attempt === attempts) throw err;
-      const wait = Math.min(60, attempt * 5);
-      process.stderr.write(`\n  ${err.message}; resuming in ${wait}s (attempt ${attempt + 1}/${attempts})\n`);
+      stalled = size() > have ? 0 : stalled + 1;
+      if (stalled >= attempts) throw new Error(`${err.message} (no progress after ${attempts} tries; run the command again to resume)`);
+      const wait = Math.min(60, 5 + stalled * 5);
+      process.stderr.write(`\n  ${err.message}; resuming in ${wait}s (try ${attempt + 1}${stalled ? `, ${stalled} without progress` : ""})\n`);
       await new Promise((r) => setTimeout(r, wait * 1000));
     }
   }
