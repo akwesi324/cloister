@@ -13,5 +13,8 @@
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
     "check:sh": "node test/check-shell.js"
+  },
+  "devDependencies": {
+    "supabase": "^3.2.0"
   }
 }
